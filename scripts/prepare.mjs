@@ -1,105 +1,127 @@
-// scripts/prepare.mjs — prepares the make.fun Payday coin for launch.
+// prepare.mjs — builds the coin's metadata, verifies the public URLs,
+// and generates a fresh mint keypair for the launch.
 //
-// Run once, from the repository root, AFTER the first commit is pushed:
-//   node scripts/prepare.mjs
+// Run once, AFTER committing + pushing, so the raw.githubusercontent.com
+// URLs below resolve. It writes:
+//   metadata.json          the coin's token metadata (committed)
+//   out/mint-keypair.json  the mint's secret key, solana-keygen format
+//                          (NEVER commit it — it is gitignored)
+//   out/prepare.json       the mint address + metadata URIs (committed)
 //
-// It builds the metadata JSON (logo + description + website), writes it at
-// the repository root, verifies the logo and metadata resolve at their
-// public raw.githubusercontent.com URLs, generates a fresh mint keypair,
-// and writes out/prepare.json — the single input the launcher reads.
-// Nothing here spends SOL or touches the chain; the mint keypair is only
-// an address until the launcher broadcasts the create.
-//
-// Why the repository hosts the metadata: catbox.moe is unreachable from
-// this machine (uploads time out after 90s), while raw.githubusercontent.com
-// answers in ~1.5s. The metadata and logo live in the public repo, so
-// their URLs are stable and fetchable by pump.fun and by the house.
-//
-// The coin (from COIN.md):
-//   name "make.fun Payday", symbol PAYDAY, website the bounty link, and a
-//   description that carries the same link, says the coin is for this
-//   bounty, and explains what make.fun is.
+// Usage: node scripts/prepare.mjs
 
-import { createHash } from 'node:crypto';
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
-import { generateKeyPairSigner, createKeyPairSignerFromBytes, writeKeyPairSigner } from '@solana/kit';
+import { mkdirSync, writeFileSync } from "node:fs";
+import { dirname, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+import { generateKeyPairSigner } from "@solana/kit";
 
-const ROOT = process.cwd();
-const KEYPAIR_PATH = process.env.MAKEFUN_KEYPAIR ?? join(ROOT, '..', 'makefun-keypair.json');
-const LOGO_PATH = join(ROOT, 'assets', 'payday.png');
-const METADATA_PATH = join(ROOT, 'metadata.json');
-const OUT_DIR = join(ROOT, 'out');
+const REPO = "sgatau/makefun-payday";
+const BOUNTY_LINK = "https://make.fun/bounty/makefun-coin-promo-01";
+const NAME = "make.fun Payday";
+const SYMBOL = "PAYDAY";
+const DESCRIPTION =
+  "Every AI agent on make.fun gets paid in USDC to build software — this coin is their payday. " +
+  "Launched for the make.fun bounty: make.fun is a site where people and their AI agents build " +
+  "programs, enter paid competitions (bounties) and are scored and ranked in the open. " +
+  "https://make.fun/bounty/makefun-coin-promo-01";
+const IMAGE_URI = `https://raw.githubusercontent.com/${REPO}/main/assets/payday.png`;
+const METADATA_URI = `https://raw.githubusercontent.com/${REPO}/main/metadata.json`;
 
-const REPO = process.env.MAKEFUN_PAYDAY_REPO ?? 'sgatau/makefun-payday';
-const BRANCH = process.env.MAKEFUN_PAYDAY_BRANCH ?? 'main';
-const COIN_NAME = 'make.fun Payday';
-const COIN_SYMBOL = 'PAYDAY';
-const BOUNTY_URL = 'https://make.fun/bounty/makefun-coin-promo-01';
-const COIN_DESCRIPTION =
-  'Every AI agent on make.fun gets paid in USDC to build software — this coin is their payday. ' +
-  'Launched for the make.fun bounty: make.fun is a site where people and their AI agents build programs, ' +
-  `enter paid competitions (bounties) and are scored and ranked in the open. ${BOUNTY_URL}`;
+const here = dirname(fileURLToPath(import.meta.url));
+const repoRoot = resolve(here, "..");
+const outDir = join(repoRoot, "out");
 
-const rawUrl = (path) => `https://raw.githubusercontent.com/${REPO}/${BRANCH}/${path}`;
-
-async function fetchBack(url, expectBytes) {
-  const res = await fetch(url, { headers: { accept: '*/*' } });
-  if (!res.ok) throw new Error(`fetch-back failed for ${url}: HTTP ${res.status}`);
-  const got = Buffer.from(await res.arrayBuffer());
-  if (expectBytes && !got.equals(expectBytes)) throw new Error(`fetch-back bytes differ for ${url}`);
-  return got;
+function fail(message) {
+  throw new Error(message);
 }
 
-const creator = await createKeyPairSignerFromBytes(
-  new Uint8Array(JSON.parse(readFileSync(KEYPAIR_PATH, 'utf8'))),
-);
-console.log(`creator: ${creator.address}`);
-
-// 1. The logo must already be committed + pushed: verify its public URL.
-const logoBytes = readFileSync(LOGO_PATH);
-const imageUrl = rawUrl('assets/payday.png');
-await fetchBack(imageUrl, logoBytes);
-const imageSha256 = createHash('sha256').update(logoBytes).digest('hex');
-console.log(`logo OK: ${imageUrl} (sha256 ${imageSha256})`);
-
-// 2. Metadata JSON at the repo root, with the website the house requires.
-const metadata = {
-  name: COIN_NAME,
-  symbol: COIN_SYMBOL,
-  description: COIN_DESCRIPTION,
-  image: imageUrl,
-  website: BOUNTY_URL,
-};
-writeFileSync(METADATA_PATH, JSON.stringify(metadata, null, 2) + '\n');
-const metadataUri = rawUrl('metadata.json');
-// It must be committed + pushed too; verify it resolves and matches.
-// (If this fetch fails, commit + push metadata.json first, then re-run.)
-const back = await fetchBack(metadataUri, readFileSync(METADATA_PATH));
-if (JSON.stringify(JSON.parse(back.toString('utf8'))) !== JSON.stringify(metadata)) {
-  throw new Error('metadata fetch-back does not match what was written');
+async function checkUrl(url, label) {
+  let res;
+  try {
+    res = await fetch(url);
+  } catch (error) {
+    fail(`${label} did not fetch: ${url} (${error.message})`);
+  }
+  if (!res.ok) {
+    fail(`${label} did not resolve: ${url} -> HTTP ${res.status}`);
+  }
+  return res;
 }
-console.log(`metadata OK: ${metadataUri}`);
 
-// 3. Fresh mint keypair for this coin only.
-// generateKeyPairSigner() defaults to a non-extractable key in this
-// @solana/kit version, which writeKeyPairSigner cannot export — pass
-// true (extractable), exactly as the proven GHOST launcher does.
-const mintSigner = await generateKeyPairSigner(true);
-const mintKeypairPath = join(OUT_DIR, 'mint-keypair.json');
-mkdirSync(OUT_DIR, { recursive: true });
-await writeKeyPairSigner(mintSigner, mintKeypairPath);
-console.log(`mint: ${mintSigner.address}`);
+// The seed of an Ed25519 PKCS#8 private key is its last 32 bytes:
+// 30 2e 02 01 00 30 05 06 03 2b 65 70 04 22 04 20 <32-byte seed>.
+async function secretKeyBytes(signer) {
+  const pkcs8 = new Uint8Array(
+    await crypto.subtle.exportKey("pkcs8", signer.keyPair.privateKey),
+  );
+  if (pkcs8.length !== 48 || pkcs8[0] !== 0x30 || pkcs8[1] !== 0x2e) {
+    fail("mint keypair did not export as an Ed25519 PKCS#8 key");
+  }
+  const seed = pkcs8.slice(16);
+  const pub = new Uint8Array(
+    await crypto.subtle.exportKey("raw", signer.keyPair.publicKey),
+  );
+  if (seed.length !== 32 || pub.length !== 32) {
+    fail("mint keypair did not export 32-byte seed and public key");
+  }
+  return [...seed, ...pub];
+}
 
-// 4. The launcher's single input.
-const prepare = {
-  coin: { name: COIN_NAME, symbol: COIN_SYMBOL, description: COIN_DESCRIPTION },
-  metadataUri,
-  metadataSource: 'github-raw',
-  metadata,
-  imageSha256,
-  mint: mintSigner.address,
-  creator: creator.address,
-};
-writeFileSync(join(OUT_DIR, 'prepare.json'), JSON.stringify(prepare, null, 2) + '\n');
-console.log('wrote out/prepare.json');
+try {
+  // 1. The metadata: name, symbol, description, image, website.
+  const metadata = {
+    name: NAME,
+    symbol: SYMBOL,
+    description: DESCRIPTION,
+    image: IMAGE_URI,
+    website: BOUNTY_LINK,
+  };
+  writeFileSync(
+    join(repoRoot, "metadata.json"),
+    JSON.stringify(metadata, null, 2) + "\n",
+  );
+
+  // 2. The public URLs must already resolve, so push first.
+  const logoRes = await checkUrl(IMAGE_URI, "logo");
+  const logoType = logoRes.headers.get("content-type") ?? "";
+  if (!logoType.startsWith("image/")) {
+    fail(`logo URL did not serve an image: ${IMAGE_URI} (${logoType})`);
+  }
+  const metaRes = await checkUrl(METADATA_URI, "metadata");
+  const fetched = await metaRes.json();
+  if (fetched.name !== NAME || fetched.symbol !== SYMBOL) {
+    fail("pushed metadata does not name this coin — push first, then prepare");
+  }
+
+  // 3. A fresh mint keypair. extractable=true so its secret can be saved
+  //    for the launcher; the file is gitignored and never committed.
+  const mintSigner = await generateKeyPairSigner(true);
+  const mint = mintSigner.address;
+  const secretKey = await secretKeyBytes(mintSigner);
+
+  mkdirSync(outDir, { recursive: true });
+  writeFileSync(join(outDir, "mint-keypair.json"), JSON.stringify(secretKey), {
+    mode: 0o600,
+  });
+  writeFileSync(
+    join(outDir, "prepare.json"),
+    JSON.stringify(
+      {
+        mint,
+        metadataUri: METADATA_URI,
+        imageUri: IMAGE_URI,
+        name: NAME,
+        symbol: SYMBOL,
+      },
+      null,
+      2,
+    ) + "\n",
+  );
+
+  console.log(`mint: ${mint}`);
+  console.log(`metadata: ${METADATA_URI}`);
+  console.log("prepare done — launch with: node scripts/launch.mjs simulate");
+} catch (error) {
+  console.error(`prepare failed: ${error.message}`);
+  process.exit(1);
+}
