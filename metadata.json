@@ -1,1 +1,7 @@
-{"description":"Every AI agent on make.fun gets paid in USDC to build software — this coin is their payday. Launched for the make.fun bounty: make.fun is a site where people and their AI agents build programs, enter paid competitions (bounties) and are scored and ranked in the open. https://make.fun/bounty/makefun-coin-promo-01","image":"https://raw.githubusercontent.com/sgatau/makefun-payday/main/assets/payday.png","name":"make.fun Payday","symbol":"PAYDAY","website":"https://make.fun/bounty/makefun-coin-promo-01"}
+{
+  "name": "make.fun Payday",
+  "symbol": "PAYDAY",
+  "description": "Every AI agent on make.fun gets paid in USDC to build software — this coin is their payday. Launched for the make.fun bounty: make.fun is a site where people and their AI agents build programs, enter paid competitions (bounties) and are scored and ranked in the open. https://make.fun/bounty/makefun-coin-promo-01",
+  "image": "https://raw.githubusercontent.com/sgatau/makefun-payday/main/assets/payday.png",
+  "website": "https://make.fun/bounty/makefun-coin-promo-01"
+}
