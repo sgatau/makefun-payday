@@ -61,6 +61,10 @@ const SOL_VAULT = address('BwWK17cbHxwWBKZkUYvzxLcNQ1YVyaFezduWbtm2de6s');
 // create_v2 discriminator: first 8 bytes of sha256("global:create_v2").
 const CREATE_V2_DISCRIM = Buffer.from([214, 144, 76, 236, 95, 139, 49, 180]);
 
+// Simulation results can carry BigInt values (e.g. inside err); plain
+// JSON.stringify throws on them. Serialize BigInts as decimal strings.
+const stringify = (v) => JSON.stringify(v, (k, x) => (typeof x === 'bigint' ? x.toString() : x));
+
 function borshStr(s) {
   const body = Buffer.from(s, 'utf8');
   const len = Buffer.alloc(4);
@@ -215,10 +219,10 @@ async function cmdSimulate() {
     logs: sim.value.logs ?? [],
     unitsConsumed: sim.value.unitsConsumed == null ? null : Number(sim.value.unitsConsumed),
   };
-  console.log(`err: ${JSON.stringify(out.err)}`);
+  console.log(`err: ${stringify(out.err)}`);
   console.log(`unitsConsumed: ${out.unitsConsumed}`);
   for (const l of out.logs) console.log(`  ${l}`);
-  writeFileSync(join(ROOT, 'out', 'simulate.json'), JSON.stringify(out, null, 2));
+  writeFileSync(join(ROOT, 'out', 'simulate.json'), JSON.stringify(out, (k, x) => (typeof x === 'bigint' ? x.toString() : x), 2));
   if (sim.value.err) {
     console.log('SIMULATION FAILED');
     process.exitCode = 2;
@@ -238,7 +242,7 @@ async function cmdLaunch() {
   // Final simulation gate: never broadcast a tx that does not simulate clean.
   const sim = await rpc.simulateTransaction(wire, { encoding: 'base64', sigVerify: true }).send();
   if (sim.value.err) {
-    console.log(`simulation failed, NOT broadcasting: ${JSON.stringify(sim.value.err)}`);
+    console.log(`simulation failed, NOT broadcasting: ${stringify(sim.value.err)}`);
     console.log((sim.value.logs ?? []).join('\n'));
     process.exit(2);
   }
@@ -261,13 +265,13 @@ async function cmdLaunch() {
       finalized = true;
       break;
     }
-    if (s?.err) throw new Error(`transaction failed on-chain: ${JSON.stringify(s.err)}`);
+    if (s?.err) throw new Error(`transaction failed on-chain: ${stringify(s.err)}`);
     await sleep(2000);
   }
   if (!finalized) throw new Error('transaction did not finalize within ~90s');
   console.log('finalized');
   const tx = await rpc.getTransaction(signature, { encoding: 'jsonParsed', maxSupportedTransactionVersion: 1 }).send();
-  if (!tx || tx.meta?.err) throw new Error(`confirmed tx has error or is missing: ${JSON.stringify(tx?.meta?.err)}`);
+  if (!tx || tx.meta?.err) throw new Error(`confirmed tx has error or is missing: ${stringify(tx?.meta?.err)}`);
   const mintInfo = await rpc.getAccountInfo(address(prep.mint)).send();
   if (!mintInfo.value) throw new Error('mint account does not exist on-chain');
   console.log(`mint account owner: ${mintInfo.value.owner} (expect ${TOKEN_2022})`);
