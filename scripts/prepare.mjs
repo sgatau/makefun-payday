@@ -82,7 +82,10 @@ if (JSON.stringify(JSON.parse(back.toString('utf8'))) !== JSON.stringify(metadat
 console.log(`metadata OK: ${metadataUri}`);
 
 // 3. Fresh mint keypair for this coin only.
-const mintSigner = await generateKeyPairSigner();
+// generateKeyPairSigner() defaults to a non-extractable key in this
+// @solana/kit version, which writeKeyPairSigner cannot export — pass
+// true (extractable), exactly as the proven GHOST launcher does.
+const mintSigner = await generateKeyPairSigner(true);
 const mintKeypairPath = join(OUT_DIR, 'mint-keypair.json');
 mkdirSync(OUT_DIR, { recursive: true });
 await writeKeyPairSigner(mintSigner, mintKeypairPath);
